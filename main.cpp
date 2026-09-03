@@ -15,9 +15,11 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  * ****************************************************************************/
-#include "kblib/simple.h"
+#include "kblib/iterators.h"
+#include <algorithm>
 #include <array>
 #include <cassert>
+#include <concepts>
 #include <iostream>
 #include <numeric>
 #include <ranges>
@@ -37,6 +39,15 @@ int score(card c) {
 		return 10;
 	} else {
 		return static_cast<int>(c);
+	}
+}
+
+bool is_consecutive(std::ranges::forward_range auto&& range) {
+	if (std::empty(range)) {
+		return true;
+	} else {
+		return std::ranges::equal(range,
+		                          kblib::range(*begin(range), *end(range)));
 	}
 }
 
@@ -67,9 +78,15 @@ struct game {
 			const std::array<int, 4> same_scores{0, 2, 6, 12};
 			s += same_scores[same.second];
 		}
-		for (auto s : kblib::range(7, 2)) {
-			return s;
+		for (auto size : kblib::range(std::max(7uz, stack.size()), 2uz, -1uz)) {
+			std::vector<card> last(end(stack) - size, end(stack));
+			std::sort(begin(last), end(last));
+			if (is_consecutive(last)) {
+				s += size;
+				break;
+			}
 		}
+		return s;
 	}
 	int total() const {
 		return std::accumulate(begin(stack), end(stack), 0,
