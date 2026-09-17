@@ -16,7 +16,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  * ****************************************************************************/
 #include "kblib/containers.h"
-#include "kblib/io.h"
 #include "kblib/iterators.h"
 #include "kblib/random.h"
 #include "kblib/stringops.h"
@@ -24,45 +23,54 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
-#include <concepts>
 #include <iostream>
 #include <numeric>
 #include <ranges>
 #include <vector>
 
-enum card : std::uint8_t {
-	null = 0,
+using std::exchange, std::all_of, kblib::range, kblib::etoi;
+using std::istream, std::ostream, std::cin, std::cout, std::cerr,
+    std::exception, std::invalid_argument;
+using std::size_t, std::uint8_t;
+using std::string, std::string_view, std::vector, std::array,
+    std::unordered_map;
+using namespace std::literals;
+namespace stdr = std::ranges;
+namespace stdv = std::views;
+
+enum card : uint8_t {
+	card_null = 0,
 	ace = 1,
 	ten = 10,
 	jack = 11,
 	queen = 12,
 	king = 13
 };
-constexpr std::size_t ranks = 13;
-constexpr std::size_t suits = 4;
-constexpr std::size_t deck_size = ranks * suits;
+constexpr auto ranks = 13u;
+constexpr auto suits = 4u;
+constexpr auto deck_size = ranks * suits;
 
-int value(card c) {
+auto value(card c) -> int {
 	if (c >= card::jack) {
 		return 10;
 	} else {
 		return static_cast<int>(c);
 	}
 }
-card card_from_label(char s) {
-	static const std::unordered_map<char, card> map{{'A', ace},   {'0', ten},
-	                                                {'X', ten},   {'J', jack},
-	                                                {'Q', queen}, {'K', king}};
+auto card_from_label(char s) -> card {
+	static const unordered_map<char, card> map{{'A', ace},   {'0', ten},
+	                                           {'X', ten},   {'J', jack},
+	                                           {'Q', queen}, {'K', king}};
 	if (s >= '0' and s <= '9') {
 		return static_cast<card>(s - '0');
 	} else {
-		return kblib::get_or(map, kblib::toupper(s), card::null);
+		return kblib::get_or(map, kblib::toupper(s), card::card_null);
 	}
 }
-char label_for_card(card c) {
-	static const std::unordered_map<card, char> map{{null, '-'},  {ace, 'A'},
-	                                                {ten, 'X'},   {jack, 'J'},
-	                                                {queen, 'Q'}, {king, 'K'}};
+auto label_for_card(card c) -> char {
+	static const unordered_map<card, char> map{{card_null, '-'}, {ace, 'A'},
+	                                           {ten, 'X'},       {jack, 'J'},
+	                                           {queen, 'Q'},     {king, 'K'}};
 	if (c > ace and c < ten) {
 		return static_cast<char>(c + '0');
 	} else {
@@ -70,12 +78,11 @@ char label_for_card(card c) {
 	}
 }
 
-bool is_consecutive(std::ranges::forward_range auto&& range) {
-	if (std::empty(range)) {
+auto is_consecutive(stdr::forward_range auto&& r) -> bool {
+	if (empty(r)) {
 		return true;
 	} else {
-		return std::ranges::equal(range,
-		                          kblib::range(*begin(range), *end(range)));
+		return stdr::equal(r, range(*begin(r), *end(r)));
 	}
 }
 
@@ -85,53 +92,63 @@ struct game {
 	static constexpr auto total_limit = 31;
 	static constexpr auto score_target = 63;
 
-	std::array<std::vector<card>, tableau_width> tableau_{};
-	std::vector<card> stack_{};
+	array<vector<card>, tableau_width> tableau_{};
+	vector<card> stack_{};
 	int score_{};
 	int stack_score_{};
 
-	card pop(size_t i) {
+	auto pop(size_t i) -> card {
 		assert(i < tableau_.size() and not tableau_[i].empty());
 		return kblib::pop(tableau_[i]);
 	}
-	card top(size_t i) const {
+	auto top(size_t i) const -> card {
 		assert(i < tableau_.size());
 		if (not tableau_[i].empty()) {
 			return tableau_[i].back();
 		} else {
-			return card::null;
+			return card::card_null;
 		}
 	}
-	std::array<card, tableau_width> top() const {
+	auto top() const -> array<card, tableau_width> {
 		return {top(0), top(1), top(2), top(3)};
 	}
-	int total() const {
+	auto total() const -> int {
 		return std::accumulate(begin(stack_), end(stack_), 0,
 		                       [](int a, card c) { return a + value(c); });
 	}
 
-	// returns false when?
-	bool append(size_t i) {
-		assert(i < tableau_.size());
-		assert(not tableau_[i].empty());
-		if (total() + value(top(i)) > total_limit) {
-			for (auto c : top()) {
-				if (total() + value(c) <= total_limit) {
-					return false;
-				}
+	auto can_play(size_t i) const noexcept -> bool {
+		assert(i < tableau_.size() and not tableau_[i].empty());
+		return can_append(top(i));
+	}
+	auto can_append(card c) const noexcept -> bool {
+		// stack total may not exceed 31
+		return total() + value(c) <= total_limit;
+	}
+	auto can_submit() const noexcept -> bool {
+		for (auto c : top()) {
+			if (can_append(c)) {
+				return false;
 			}
-			return false;
 		}
+		return true;
+	}
+	auto submit() -> void {
+		assert(can_submit());
+		score_ += exchange(stack_score_, 0);
+		stack_.clear();
+	}
+
+	auto play(size_t i) -> void {
+		assert(i < tableau_.size() and not tableau_[i].empty());
+		assert(can_play(i));
 		return append(pop(i));
 	}
-	bool append(card c) {
+	auto append(card c) -> void {
+		assert(can_append(c));
 		const auto t = total() + value(c);
-		// stack total may not exceed 31
-		if (t > total_limit) {
-			return false;
-		}
 		// first card in stack is a jack = +2 pts
-		if (stack_.empty() and c == card::jack) {
+		if (stack_.empty() and c == jack) {
 			stack_score_ += 2;
 		}
 		// stack total is exactly 15 = +2 pts
@@ -146,23 +163,22 @@ struct game {
 		auto same_count = std::find_if(rbegin(stack_), rend(stack_),
 		                               [c](card x) { return x != c; })
 		                  - rbegin(stack_);
-		const std::array same_scores{0, 2, 6, 12};
+		const array same_scores{0, 2, 6, 12};
 		stack_score_ += same_scores[same_count];
 		stack_.push_back(c);
 
 		// run of 3 to 7 cards, in any order = +3 to +7 pts
-		for (auto size : kblib::range(std::max(7uz, stack_.size()), 2uz, -1uz)) {
-			std::vector<card> last(end(stack_) - size, end(stack_));
+		for (auto size : range(std::max(7uz, stack_.size()), 2uz, -1uz)) {
+			vector<card> last(end(stack_) - size, end(stack_));
 			std::sort(begin(last), end(last));
 			if (is_consecutive(last)) {
 				stack_score_ += size;
 				break;
 			}
 		}
-		return true;
 	}
 
-	int get_stack_score() const {
+	auto get_stack_score() const -> int {
 		if (stack_.empty()) {
 			return 0;
 		}
@@ -176,17 +192,17 @@ struct game {
 		} else if (t == 31) {
 			s += 2;
 		}
-		for (std::pair<card, int> same{}; auto c : std::views::reverse(stack_)) {
+		for (std::pair<card, int> same{}; auto c : stdv::reverse(stack_)) {
 			if (c == same.first) {
 				++same.second;
 			} else {
 				same = {c, 1};
 			}
-			const std::array same_scores{0, 2, 6, 12};
+			const array same_scores{0, 2, 6, 12};
 			s += same_scores[same.second];
 		}
-		for (auto size : kblib::range(std::max(7uz, stack_.size()), 2uz, -1uz)) {
-			std::vector<card> last(end(stack_) - size, end(stack_));
+		for (auto size : range(std::max(7uz, stack_.size()), 2uz, -1uz)) {
+			vector<card> last(end(stack_) - size, end(stack_));
 			std::sort(begin(last), end(last));
 			if (is_consecutive(last)) {
 				s += size;
@@ -196,7 +212,7 @@ struct game {
 		return s;
 	}
 
-	void assign(std::string_view repr) {
+	auto assign(string_view repr) -> void {
 		auto sections = kblib::split_dsv(repr, ',');
 		if (sections.size() < tableau_width
 		    or sections.size() > (tableau_width + 1)) {
@@ -205,7 +221,7 @@ struct game {
 		score_ = 0;
 		stack_score_ = 0;
 		stack_.clear();
-		for (auto i : kblib::range(tableau_width)) {
+		for (auto i : range(tableau_width)) {
 			tableau_[i].clear();
 			for (auto c : sections[i]) {
 				tableau_[i].push_back(card_from_label(c));
@@ -223,14 +239,14 @@ struct game {
 		assert(is_possible_tableau());
 	}
 
-	friend std::istream& operator>>(std::istream& is, game& g) {
-		std::string repr;
+	friend auto operator>>(istream& is, game& g) -> istream& {
+		string repr;
 		is >> repr;
 		g.assign(repr);
 		assert(g.is_possible_tableau());
 		return is;
 	}
-	friend std::ostream& operator<<(std::ostream& os, const game& g) {
+	friend auto operator<<(ostream& os, const game& g) -> ostream& {
 		for (auto col : g.tableau_) {
 			for (auto c : col) {
 				os << label_for_card(c);
@@ -244,29 +260,29 @@ struct game {
 		return os;
 	}
 	game() = default;
-	game(std::string_view repr) { assign(repr); }
+	game(string_view repr) { assign(repr); }
 	template <typename Gen>
 	game(Gen&& gen) {
-		std::vector<card> deck;
-		for (auto i : kblib::range(1, 14)) {
-			deck.insert(end(deck), 4, card(i));
+		vector<card> deck;
+		for (auto i : range(1u, ranks + 1u)) {
+			deck.insert(end(deck), suits, card(i));
 		}
-		assert(deck.size() == 52);
+		assert(deck.size() == deck_size);
 		std::shuffle(begin(deck), end(deck), gen);
-		for (auto s : kblib::range(tableau_.size())) {
+		for (auto s : range(tableau_.size())) {
 			tableau_[s].assign(begin(deck) + tableau_depth * s,
 			                   begin(deck) + tableau_depth * (s + 1));
 		}
 		assert(is_full_tableau());
 	}
 
-	std::array<int, ranks + 1> histogram() const {
-		std::array<int, ranks + 1> hist{};
+	auto histogram() const -> array<unsigned, ranks + 1> {
+		array<unsigned, ranks + 1> hist{};
 		auto inc = [&](card c) {
 			if (c >= ace and c <= king) {
-				++hist[kblib::etoi(c)];
+				++hist[etoi(c)];
 			} else {
-				++hist[0];
+				++hist[etoi(card_null)];
 			}
 		};
 		for (auto file : tableau_) {
@@ -279,56 +295,65 @@ struct game {
 		}
 		return hist;
 	}
-	bool is_full_tableau() const {
+	auto is_full_tableau() const -> bool {
 		auto hist = histogram();
-		return hist[0] == 0 and stack_.empty()
+		return hist[etoi(card_null)] == 0 and stack_.empty()
 		       and std::all_of(begin(tableau_), end(tableau_),
 		                       [](auto& f) { return f.size() == tableau_depth; })
-		       and std::all_of(begin(hist) + 1, end(hist),
-		                       [](auto c) { return c == 4; });
+		       and std::all_of(begin(hist) + etoi(ace), end(hist),
+		                       [](auto c) { return c == suits; });
 	}
-	bool is_possible_tableau() const {
+	auto is_possible_tableau() const -> bool {
 		auto hist = histogram();
-		return hist[0] == 0 and total() <= total_limit
+		return hist[etoi(card_null)] == 0 and total() <= total_limit
 		       and std::all_of(begin(tableau_), end(tableau_),
 		                       [](auto& f) { return f.size() <= tableau_depth; })
-		       and std::all_of(begin(hist) + 1, end(hist),
-		                       [](auto c) { return c <= 4; });
+		       and std::all_of(begin(hist) + etoi(ace), end(hist),
+		                       [](auto c) { return c <= suits; });
 	}
 };
-game read_deal(std::istream& is) {
+auto read_deal(istream& is) -> game {
 	game g;
 	is >> g;
 	return g;
 }
 
 struct solution {
-	std::vector<std::uint8_t> moves{};
+	vector<uint8_t> moves{};
 	int score{};
+	friend auto operator<<(ostream& os, const solution& sol) -> ostream& {
+		os << '[';
+		for (auto m : sol.moves) {
+			os << m;
+		}
+		return os << ']';
+	}
 };
-solution solve(game g);
+auto solve(game g) -> solution;
 
-int main(int argc, char** argv) {
+auto main(int argc, char** argv) -> int {
 	if (argc > 1) {
-		for (std::string_view sv : kblib::indirect(&argv[1], &argv[argc])) {
+		for (string_view sv : kblib::indirect(&argv[1], &argv[argc])) {
 			if (sv == "-") {
-				auto g = read_deal(std::cin);
-				std::cout << g << '\n' << g.stack_score_ << '\n';
-				while (g.append(0u)) {
+				auto g = read_deal(cin);
+				cout << g << '\n' << g.stack_score_ << '\n';
+				while (g.can_play(0u)) {
+					g.play(0u);
 				}
-				std::cout << g << '\n' << g.stack_score_ << '\n';
+				cout << g << '\n' << g.stack_score_ << '\n';
 			} else {
 				auto g = game(sv);
-				std::cout << g << '\n' << g.stack_score_ << '\n';
-				while (g.append(0u)) {
+				cout << g << '\n' << g.stack_score_ << '\n';
+				while (g.can_play(0u)) {
+					g.play(0u);
 				}
-				std::cout << g << '\n' << g.stack_score_ << '\n';
+				cout << g << '\n' << g.stack_score_ << '\n';
 			}
 		}
 	} else {
 		auto seed = std::random_device{}();
-		std::cout << "seed: " << seed << '\n';
+		cout << "seed: " << seed << '\n';
 		auto g = game(kblib::best_lcgs::lcg32(seed));
-		std::cout << g << '\n';
+		cout << g << '\n';
 	}
 }
