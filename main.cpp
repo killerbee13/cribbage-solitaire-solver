@@ -22,7 +22,9 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cassert>
+#include <csignal>
 #include <iostream>
 #include <numeric>
 #include <ranges>
@@ -37,6 +39,12 @@ using std::string, std::string_view, std::vector, std::array,
 using namespace std::literals;
 namespace stdr = std::ranges;
 namespace stdv = std::views;
+
+inline std::atomic<std::sig_atomic_t> stop_requested;
+inline std::atomic<std::sig_atomic_t> info_requested;
+
+extern "C" inline void sigterm_handler(int signal) { stop_requested = signal; }
+extern "C" inline void siginfo_handler(int signal) { info_requested = signal; }
 
 enum card : uint8_t {
 	card_null = 0,
@@ -77,6 +85,7 @@ auto label_for_card(card c) -> char {
 		return kblib::get_or(map, c, '-');
 	}
 }
+ostream& operator<<(ostream& os, card c) { return os << label_for_card(c); }
 
 auto is_consecutive(stdr::forward_range auto&& r) -> bool {
 	if (empty(r)) {
@@ -118,12 +127,12 @@ struct game {
 	}
 
 	auto can_play(size_t i) const noexcept -> bool {
-		assert(i < tableau_.size() and not tableau_[i].empty());
-		return can_append(top(i));
+		assert(i < tableau_.size());
+		return (not tableau_[i].empty()) and can_append(top(i));
 	}
 	auto can_append(card c) const noexcept -> bool {
 		// stack total may not exceed 31
-		return total() + value(c) <= total_limit;
+		return c != card_null and total() + value(c) <= total_limit;
 	}
 	auto can_submit() const noexcept -> bool {
 		for (auto c : top()) {
@@ -134,15 +143,17 @@ struct game {
 		return true;
 	}
 	auto submit() -> void {
-		assert(can_submit());
-		score_ += exchange(stack_score_, 0);
-		stack_.clear();
+		if (can_submit()) {
+			score_ += exchange(stack_score_, 0);
+			stack_.clear();
+		}
 	}
 
 	auto play(size_t i) -> void {
 		assert(i < tableau_.size() and not tableau_[i].empty());
 		assert(can_play(i));
-		return append(pop(i));
+		append(pop(i));
+		return submit();
 	}
 	auto append(card c) -> void {
 		assert(can_append(c));
@@ -211,6 +222,28 @@ struct game {
 		}
 		return s;
 	}
+	auto score() const -> int { return score_ + stack_score_; }
+	auto card_sum() const -> int {
+		auto op = [](int a, card c) { return a + value(c); };
+		auto sum = std::accumulate(begin(stack_), end(stack_), 0, op);
+		for (auto& col : tableau_) {
+			sum = std::accumulate(begin(col), end(col), sum, op);
+		}
+		return sum;
+	}
+	// this is a very rough overestimate for pruning. it's not super effective
+	auto potential_score() const -> int {
+		auto h = histogram();
+		auto sc = 0;
+		for (auto c : h) {
+			if (c == 4) {
+				sc += (7 * 3 + 12);
+			} else {
+				sc += 7 * c;
+			}
+		}
+		return sc + (card_sum() / 15) * 2;
+	}
 
 	auto assign(string_view repr) -> void {
 		auto sections = kblib::split_dsv(repr, ',');
@@ -260,8 +293,13 @@ struct game {
 		return os;
 	}
 	game() = default;
+	game(const game&) = default;
+	game(game&&) = default;
+	game& operator=(const game&) = default;
+	game& operator=(game&&) = default;
 	game(string_view repr) { assign(repr); }
 	template <typename Gen>
+	   requires requires { typename Gen::result_type; }
 	game(Gen&& gen) {
 		vector<card> deck;
 		for (auto i : range(1u, ranks + 1u)) {
@@ -276,6 +314,10 @@ struct game {
 		assert(is_full_tableau());
 	}
 
+	auto card_count() const -> size_t {
+		return tableau_[0].size() + tableau_[1].size() + tableau_[2].size()
+		       + tableau_[3].size();
+	}
 	auto histogram() const -> array<unsigned, ranks + 1> {
 		array<unsigned, ranks + 1> hist{};
 		auto inc = [&](card c) {
@@ -318,42 +360,105 @@ auto read_deal(istream& is) -> game {
 	return g;
 }
 
+struct move {
+	uint8_t col;
+	card c;
+};
 struct solution {
-	vector<uint8_t> moves{};
+	game g{};
+	vector<move> moves{};
 	int score{};
+	auto can_play(size_t i) -> bool { return g.can_play(i); }
+	auto play(this auto self, size_t i) -> solution {
+		assert(self.can_play(i));
+		self.moves.push_back({static_cast<uint8_t>(i), self.g.top(i)});
+		self.g.play(i);
+		self.score = self.g.score();
+		return self;
+	}
 	friend auto operator<<(ostream& os, const solution& sol) -> ostream& {
-		os << '[';
+		os << "{score=" << sol.score << ", moves=[";
 		for (auto m : sol.moves) {
-			os << m;
+			os << +m.col << '(' << m.c << "), ";
 		}
-		return os << ']';
+		return os << "]}";
 	}
 };
-auto solve(game g) -> solution;
+auto total_leaves = 0ull;
+solution best_solve;
+
+auto solve(solution s_current) -> solution {
+	std::vector<solution> options;
+	auto s_best = s_current;
+	if (stop_requested) {
+	} else if (auto p = s_current.g.potential_score();
+	           p != 0 and s_current.score + p < game::score_target) {
+		total_leaves += stdr::count_if(s_current.g.tableau_,
+		                               [](auto& col) { return not col.empty(); });
+		if (s_current.g.card_count() > 4) {
+			std::cout << "[" << s_current.score << "+" << p
+			          << "] skipping search of last " << s_current.g.card_count()
+			          << " cards\n";
+		}
+	} else {
+		for (auto i : range(uint8_t{game::tableau_width})) {
+			if (s_current.can_play(i)) {
+				options.push_back(s_current.play(i));
+			}
+		}
+		stdr::sort(options, std::greater<>{}, &solution::score);
+		for (auto s_next : options) {
+			if (auto s_tmp = solve(s_next); s_tmp.score > s_best.score) {
+				s_best = std::move(s_tmp);
+			}
+		}
+	}
+	if (options.empty()) {
+		++total_leaves;
+		if (s_best.score > best_solve.score) {
+			best_solve = s_best;
+			cout << "leaf[" << total_leaves << "] new best solve: " << s_best
+			     << '\n';
+		}
+		if (total_leaves % 1'000'000 == 0) {
+			cout << "leaves: " << total_leaves / 1'000'000
+			     << "M; top score: " << best_solve.score << '\n';
+		}
+	}
+	if (info_requested.exchange(0)) {
+		cout << "leaves: " << total_leaves << "M; best: " << best_solve << '\n';
+	}
+	return s_best;
+}
+
+void process_deal(game g) {
+	cout << g << '\n' << g.stack_score_ << '\n';
+	auto s = solve({g});
+	cout << "best solution found " << s << '\n';
+	cout << "searched " << total_leaves << " solutions\n";
+	return;
+}
 
 auto main(int argc, char** argv) -> int {
+	signal(SIGTERM, sigterm_handler);
+	signal(SIGINT, sigterm_handler);
+	signal(SIGUSR1, siginfo_handler);
+	signal(SIGUSR2, siginfo_handler);
+	signal(SIGTSTP, siginfo_handler);
 	if (argc > 1) {
 		for (string_view sv : kblib::indirect(&argv[1], &argv[argc])) {
 			if (sv == "-") {
 				auto g = read_deal(cin);
-				cout << g << '\n' << g.stack_score_ << '\n';
-				while (g.can_play(0u)) {
-					g.play(0u);
-				}
-				cout << g << '\n' << g.stack_score_ << '\n';
+				process_deal(std::move(g));
 			} else {
 				auto g = game(sv);
-				cout << g << '\n' << g.stack_score_ << '\n';
-				while (g.can_play(0u)) {
-					g.play(0u);
-				}
-				cout << g << '\n' << g.stack_score_ << '\n';
+				process_deal(std::move(g));
 			}
 		}
 	} else {
 		auto seed = std::random_device{}();
 		cout << "seed: " << seed << '\n';
 		auto g = game(kblib::best_lcgs::lcg32(seed));
-		cout << g << '\n';
+		process_deal(std::move(g));
 	}
 }
