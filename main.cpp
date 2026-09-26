@@ -1,6 +1,6 @@
 /* *****************************************************************************
- * %{QMAKE_PROJECT_NAME}
- * Copyright (c) %YEAR% killerbee
+ * cribbage-solitaire-solver
+ * Copyright (c) 2026 killerbee
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
