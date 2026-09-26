@@ -113,7 +113,6 @@ struct game {
 	tableau_type tableau_{};
 	vector<card> stack_{};
 	int score_{};
-	int stack_score_{};
 
 	auto pop(size_t i) -> card {
 		assert(i < tableau_.size() and not tableau_[i].empty());
@@ -153,7 +152,6 @@ struct game {
 	}
 	auto submit() -> bool {
 		if (can_submit()) {
-			score_ += exchange(stack_score_, 0);
 			stack_.clear();
 			return true;
 		}
@@ -172,14 +170,14 @@ struct game {
 		const auto t = total() + value(c);
 		// first card in stack is a jack = +2 pts
 		if (stack_.empty() and c == jack) {
-			stack_score_ += 2;
+			score_ += 2;
 		}
 		// stack total is exactly 15 = +2 pts
 		if (t == 15) {
-			stack_score_ += 2;
+			score_ += 2;
 			// stack total is exactly 31 = +2 pts
 		} else if (t == 31) {
-			stack_score_ += 2;
+			score_ += 2;
 		}
 
 		// set of 2, 3, or 4 of the same card = +2/+6/+12 pts
@@ -187,7 +185,7 @@ struct game {
 		                               [c](card x) { return x != c; })
 		                  - rbegin(stack_);
 		const array same_scores{0, 2, 6, 12};
-		stack_score_ += same_scores[same_count];
+		score_ += same_scores[same_count];
 		stack_.push_back(c);
 
 		// run of 3 to 7 cards, in any order = +3 to +7 pts
@@ -195,46 +193,13 @@ struct game {
 			vector<card> last(end(stack_) - size, end(stack_));
 			stdr::sort(last);
 			if (is_consecutive(last)) {
-				stack_score_ += size;
+				score_ += size;
 				break;
 			}
 		}
 	}
 
-	auto get_stack_score() const -> int {
-		if (stack_.empty()) {
-			return 0;
-		}
-		const auto t = total();
-		auto s = 0;
-		if (stack_.front() == card::jack) {
-			s += 2;
-		}
-		if (t == 15) {
-			s += 2;
-		} else if (t == 31) {
-			s += 2;
-		}
-		for (pair<card, int> same{}; auto c : stdv::reverse(stack_)) {
-			if (c == same.first) {
-				++same.second;
-			} else {
-				same = {c, 1};
-			}
-			const array same_scores{0, 2, 6, 12};
-			s += same_scores[same.second];
-		}
-		for (auto size : range(min(7uz, stack_.size()), 2uz, -1uz)) {
-			vector<card> last(end(stack_) - size, end(stack_));
-			stdr::sort(last);
-			if (is_consecutive(last)) {
-				s += size;
-				break;
-			}
-		}
-		return s;
-	}
-	auto score() const -> int { return score_ + stack_score_; }
+	auto score() const -> int { return score_; }
 	auto card_sum() const -> int {
 		auto op = [](int a, card c) { return a + value(c); };
 		auto sum = accumulate(begin(stack_), end(stack_), 0, op);
@@ -242,19 +207,6 @@ struct game {
 			sum = accumulate(begin(col), end(col), sum, op);
 		}
 		return sum;
-	}
-	// this is a very rough overestimate for pruning. it's not super effective
-	auto potential_score() const -> int {
-		auto h = histogram();
-		auto sc = 0;
-		for (auto c : h) {
-			if (c == 4) {
-				sc += (7 * 3 + 12);
-			} else {
-				sc += 7 * c;
-			}
-		}
-		return sc + (card_sum() / 15) * 2;
 	}
 
 	auto assign(string_view repr) -> void {
@@ -264,7 +216,6 @@ struct game {
 			throw invalid_argument("games must have 4 or 5 sections");
 		}
 		score_ = 0;
-		stack_score_ = 0;
 		stack_.clear();
 		for (auto i : range(tableau_width)) {
 			tableau_[i].clear();
@@ -392,7 +343,7 @@ struct move {
 };
 struct cached_solve {
 	vector<move> moves;
-	int score;
+	int score{};
 	friend auto operator<<(ostream& os, const cached_solve& sol) -> ostream& {
 		os << "{score=" << sol.score << ", moves=[";
 		for (auto m : sol.moves) {
@@ -401,127 +352,115 @@ struct cached_solve {
 		return os << "]}";
 	}
 };
-struct solution {
-	game g{};
-	vector<move> moves{};
-	int score{};
-	auto can_play(size_t i) -> bool { return g.can_play(i); }
+struct solution
+    : game
+    , cached_solve {
+	using cached_solve::score;
+	auto g() & -> game& { return *this; }
+	auto g() const& -> const game& { return *this; }
+	auto g() && -> game&& { return std::move(*this); }
+	auto s() & -> cached_solve& { return *this; }
+	auto s() const& -> const cached_solve& { return *this; }
+	auto s() && -> cached_solve&& { return std::move(*this); }
 	[[nodiscard]] auto play(this auto self, size_t i) -> solution {
-		assert(self.can_play(i));
-		self.moves.push_back({static_cast<uint8_t>(i), self.g.top(i)});
-		self.g.play(i);
-		self.score = self.g.score();
+		self.do_play(i);
+		return self;
+	}
+	[[nodiscard]] auto play(this auto self, move m) -> solution {
+		assert(self.top(m.col) == m.c);
+		self.do_play(m.col);
 		return self;
 	}
 	[[nodiscard]] auto play(this auto self, span<const move> ms) -> solution {
 		for (auto m : ms) {
-			assert(self.can_play(m.col));
-			self.moves.push_back({static_cast<uint8_t>(m.col), self.g.top(m.col)});
-			self.g.play(m.col);
-			self.score = self.g.score();
+			assert(self.top(m.col) == m.c);
+			self.do_play(m.col);
 		}
 		return self;
 	}
-	friend auto operator<<(ostream& os, const solution& sol) -> ostream& {
-		os << "{score=" << sol.score << ", moves=[";
-		for (auto m : sol.moves) {
-			os << +m.col << ':' << m.c << ", ";
-		}
-		return os << "]}";
+
+ private:
+	auto do_play(size_t i) -> void {
+		assert(can_play(i));
+		moves.push_back({static_cast<uint8_t>(i), top(i)});
+		game::play(i);
+		score = game::score();
 	}
 };
 constexpr auto print_freq = 1'000'000;
 
-auto total_leaves = 0ull;
-auto last_printed = 0ull;
-solution best_solve;
+using cache = map<game::tableau_type, cached_solve>;
+struct solve_context {
+	cache mem;
+	solution best_solve{};
+	size_t total_leaves{};
+	size_t last_printed{};
+};
 
-auto solve(solution s_current) -> solution {
-	vector<solution> options;
-	auto s_best = s_current;
-	if (stop_requested) {
-	} else if (auto p = s_current.g.potential_score();
-	           p != 0 and s_current.score + p < game::score_target) {
-		total_leaves += stdr::count_if(s_current.g.tableau_,
-		                               [](auto& col) { return not col.empty(); });
-		if (s_current.g.card_count() > 4) {
-			cout << "[" << s_current.score << "+" << p
-			     << "] skipping search of last " << s_current.g.card_count()
-			     << " cards\n";
-		}
-	} else {
-		for (auto i : range(uint8_t{game::tableau_width})) {
-			if (s_current.can_play(i)) {
-				options.push_back(s_current.play(i));
-			}
-		}
-		stdr::sort(options, std::greater<>{}, &solution::score);
-		for (auto s_next : options) {
-			if (auto s_tmp = solve(s_next); s_tmp.score > s_best.score) {
-				s_best = std::move(s_tmp);
-			}
-		}
+#define DEBUG_CACHE_ENTRY(g, s)                                             \
+	do {                                                                     \
+		auto count = g.card_count();                                          \
+		auto size = s.moves.size();                                           \
+		cout << __LINE__ << " " #g "=" << static_cast<const game&>(g)         \
+		     << ",count=" << count << ", " #s "="                             \
+		     << static_cast<const cached_solve>(s) << std::endl;              \
+		if (count != size) {                                                  \
+			cout << "error " << count << "c!=" << size << "m\n" << std::flush; \
+		}                                                                     \
+		assert(count == size);                                                \
+	} while (false)
+#define DEBUG_EMPTY_TAB(g)                                          \
+	do {                                                             \
+		cout << __LINE__ << " " #g "=" << static_cast<const game&>(g) \
+		     << ",count=" << g.card_count() << '\n';                  \
+		if (g.card_count() != 0) {                                    \
+			cout << "error tableau not empty\n" << std::flush;         \
+		}                                                             \
+		assert(g.card_count() == 0);                                  \
+	} while (false)
+
+auto assert_cache_valid(const cache& mem) {
+	for (auto [tab, solve] : mem) {
+		auto g = game(tab);
+		auto count = g.card_count();
+		auto size = solve.moves.size();
+		assert(count == size);
+		//		DEBUG_CACHE_ENTRY(g, solve);
 	}
-	if (options.empty()) {
-		++total_leaves;
-		if (s_best.score > best_solve.score) {
-			best_solve = s_best;
-			cout << "leaf[" << total_leaves << "] new best solve: " << s_best
-			     << '\n';
-		}
-		if (total_leaves - last_printed > print_freq) {
-			cout << "leaves: " << total_leaves / print_freq
-			     << "M; top score: " << best_solve.score << '\n';
-			last_printed = (total_leaves / print_freq) * print_freq;
-		}
-	}
-	if (info_requested.exchange(0)) {
-		cout << "leaves: " << total_leaves << "M; best: " << best_solve << '\n';
-	}
-	return s_best;
 }
 
-using cache = map<game::tableau_type, cached_solve>;
-
-auto solve_mem(cache& mem, solution s_current, bool force = false) -> solution {
+auto solve(solve_context& ctx, solution s_current, bool force = false)
+    -> solution {
 	vector<solution> options;
 	auto s_best = s_current;
 	bool is_leaf = true;
-	if (stop_requested) {
-	} else if (s_current.g.stack_.empty() and not force) {
-		if (auto it = mem.find(s_current.g.tableau_); it != end(mem)) {
-			if (s_current.g.card_count() > 0) {
-				cout << "[" << s_current.score << "+" << it->second.score
-				     << "] skipping search of last " << s_current.g.card_count()
-				     << " cards\n";
-			}
-			auto count = s_current.g.card_count();
-			auto size = it->second.moves.size();
-			if (count != size) {
-				cout << "error " << count << "c!=" << size << "m\n";
-			}
-			cout << "503 g1=" << s_current.g << ", cur=" << s_current
-			     << ", sol=" << it->second << std::endl;
-			assert(it->second.moves.size() == s_current.g.card_count());
+	if (s_current.card_count() == 0 or stop_requested) {
+		// do nothing
+	} else if (s_current.stack_.empty() and not force) {
+		if (auto it = ctx.mem.find(s_current.tableau_); it != end(ctx.mem)) {
+			//	if (s_current.card_count() > 4) {
+			//		cout << "[" << s_current.score << "+" << it->second.score
+			//		     << "] skipping search of last " << s_current.card_count()
+			//		     << " cards\n";
+			//	}
+			//	auto& sol = it->second;
+			//	DEBUG_CACHE_ENTRY(s_current.g(), sol);
 			s_best = s_current.play(it->second.moves);
 			// options is not used so this counts for one leaf
+			//	DEBUG_EMPTY_TAB(s_best);
 		} else {
 			// clear the current moves for the cache
-			auto count = s_current.g.card_count();
-			auto sol = solve_mem(mem, {{s_current.g.tableau_}}, true);
-			auto size = sol.moves.size();
-			if (count != size) {
-				cout << "error " << count << "c!=" << size << "m\n";
-			}
-			cout << "516 g1=" << s_current.g << ", cur=" << s_current
-			     << ", sol=" << sol << std::endl;
-			assert(sol.moves.size() == s_current.g.card_count());
-			mem.try_emplace(s_current.g.tableau_,
-			                cached_solve{sol.moves, sol.score});
+			auto g1 = game{s_current.tableau_};
+			auto sol = solve(ctx, {g1}, true);
+			// DEBUG_CACHE_ENTRY(g1, sol);
+			ctx.mem.try_emplace(s_current.tableau_,
+			                    cached_solve{sol.moves, sol.score});
+			assert_cache_valid(ctx.mem);
 			// combine the move lists, skip the leaf increment because this is
 			// pseudo-tail recursion
 			s_best = s_current.play(sol.moves);
 			is_leaf = false;
+			// DEBUG_EMPTY_TAB(s_best);
 		}
 	} else {
 		for (auto i : range(uint8_t{game::tableau_width})) {
@@ -532,33 +471,34 @@ auto solve_mem(cache& mem, solution s_current, bool force = false) -> solution {
 		}
 		stdr::sort(options, std::greater<>{}, &solution::score);
 		for (auto s_next : options) {
-			if (auto s_tmp = solve_mem(mem, s_next); s_tmp.score > s_best.score) {
+			if (auto s_tmp = solve(ctx, s_next); s_tmp.score >= s_best.score) {
 				s_best = std::move(s_tmp);
 			}
 		}
+		// DEBUG_EMPTY_TAB(s_best);
 	}
 
 	if (is_leaf) {
-		++total_leaves;
-		if (s_best.score > best_solve.score) {
-			best_solve = s_best;
-			cout << "leaf[" << total_leaves << "] new best solve: " << s_best
-			     << '\n';
+		++ctx.total_leaves;
+		if (s_best.score > ctx.best_solve.score) {
+			ctx.best_solve = s_best;
+			cout << "leaf[" << ctx.total_leaves
+			     << "] new best solve: " << s_best.s() << '\n';
 		}
-		if (total_leaves - last_printed > print_freq) {
-			cout << "leaves: " << total_leaves / print_freq
-			     << "M; top score: " << best_solve.score << '\n';
-			last_printed = (total_leaves / print_freq) * print_freq;
+		if (ctx.total_leaves - ctx.last_printed > print_freq) {
+			cout << "leaves: " << ctx.total_leaves / print_freq
+			     << "M; top score: " << ctx.best_solve.score << '\n';
+			ctx.last_printed = (ctx.total_leaves / print_freq) * print_freq;
 		}
 	}
 	if (info_requested.exchange(0)) {
-		cout << "leaves: " << total_leaves << "M; best: " << best_solve << '\n';
+		cout << "leaves: " << ctx.total_leaves
+		     << "M; best: " << ctx.best_solve.s() << '\n';
 	}
 	return s_best;
 }
 
-auto preprocess_scores(const game& g) -> cache {
-	cache ret;
+auto preprocess_scores(solve_context& ctx, const game& g) -> void {
 	using position = array<unsigned, game::tableau_width>;
 	vector<position> positions;
 	auto inc = [](position& x) {
@@ -589,28 +529,24 @@ auto preprocess_scores(const game& g) -> cache {
 			break;
 		}
 		auto g1 = game(g.tableau_, p);
-		auto count = g1.card_count();
-		auto sol = solve_mem(ret, {g1});
-		auto size = sol.moves.size();
-		//		if (count != size) {
-		//			cout << "error " << count << "c!=" << size << "m\n";
-		//		}
-		//		cout << "598 g1=" << g1 << ", sol=" << sol << std::endl;
-		assert(count == size);
-		ret.try_emplace(g1.tableau_, cached_solve{sol.moves, sol.score});
+		auto sol = solve(ctx, {g1});
+		DEBUG_CACHE_ENTRY(g1, sol);
+		ctx.mem.try_emplace(g1.tableau_, cached_solve{sol.moves, sol.score});
+		assert_cache_valid(ctx.mem);
 		//	cout << "pos: (" << p[0] << ',' << p[1] << ',' << p[2] << ',' << p[3]
 		//	     << "), score: " << score << '\n';
 	}
-	return ret;
+	return;
 }
 
 void process_deal(game g) {
-	cout << g << '\n' << g.stack_score_ << '\n';
-	auto c = preprocess_scores(g);
-	cout << "preprocessed smallest " << c.size() << " board states\n";
-	auto s = solve_mem(c, {g});
-	cout << "best solution found " << s << '\n';
-	cout << "searched " << total_leaves << " solutions\n";
+	cout << g << '\n' << g.score() << '\n';
+	solve_context ctx;
+	// preprocess_scores(ctx, g);
+	// cout << "preprocessed smallest " << c.size() << " board states\n";
+	auto s = solve(ctx, {g});
+	cout << "best solution found " << s.s() << '\n';
+	cout << "searched " << ctx.total_leaves << " solutions\n";
 	cout << "walkthrough:\n";
 	auto g1 = g;
 	for (auto m : s.moves) {

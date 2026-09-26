@@ -36,8 +36,8 @@ elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
 endif()
 
 if(CMAKE_BUILD_TYPE MATCHES "Debug")
-	add_compile_options(-fsanitize=undefined,address)
-	add_link_options(-fsanitize=undefined,address)
+#	add_compile_options(-fsanitize=undefined,address)
+#	add_link_options(-fsanitize=undefined,address)
 endif()
 
 if(CMAKE_BUILD_TYPE MATCHES "Release")
