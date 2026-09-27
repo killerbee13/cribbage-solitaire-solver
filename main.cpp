@@ -20,6 +20,7 @@
 #endif
 
 #include "kblib/containers.h"
+#include "kblib/hash.h"
 #include "kblib/iterators.h"
 #include "kblib/random.h"
 #include "kblib/stringops.h"
@@ -75,7 +76,7 @@ auto card_from_label(char s) -> card {
 	static const unordered_map<char, card> map{{'A', ace},   {'0', ten},
 	                                           {'X', ten},   {'J', jack},
 	                                           {'Q', queen}, {'K', king}};
-	if (s >= '0' and s <= '9') {
+	if (s > '0' and s <= '9') {
 		return static_cast<card>(s - '0');
 	} else {
 		return kblib::get_or(map, kblib::toupper(s), card::card_null);
@@ -107,7 +108,7 @@ struct game {
 	static constexpr auto tableau_width = 4u;
 	static constexpr auto tableau_depth = 13u;
 	static constexpr auto total_limit = 31;
-	static constexpr auto score_target = 63;
+	static constexpr auto score_target = 61;
 	using tableau_type = array<vector<card>, tableau_width>;
 
 	tableau_type tableau_{};
@@ -186,15 +187,17 @@ struct game {
 		                  - rbegin(stack_);
 		const array same_scores{0, 2, 6, 12};
 		score_ += same_scores[same_count];
-		stack_.push_back(c);
 
-		// run of 3 to 7 cards, in any order = +3 to +7 pts
-		for (auto size : range(min(7uz, stack_.size()), 2uz, -1uz)) {
-			vector<card> last(end(stack_) - size, end(stack_));
-			stdr::sort(last);
-			if (is_consecutive(last)) {
-				score_ += size;
-				break;
+		stack_.push_back(c);
+		if (stack_.size() >= 3) {
+			// run of 3 to 7 cards, in any order = +3 to +7 pts
+			for (auto size : range(min(7uz, stack_.size()), 2uz, -1uz)) {
+				vector<card> last(end(stack_) - size, end(stack_));
+				stdr::sort(last);
+				if (is_consecutive(last)) {
+					score_ += size;
+					break;
+				}
 			}
 		}
 	}
@@ -345,9 +348,9 @@ struct cached_solve {
 	vector<move> moves;
 	int score{};
 	friend auto operator<<(ostream& os, const cached_solve& sol) -> ostream& {
-		os << "{score=" << sol.score << ", moves=[";
+		os << "{score=" << sol.score << ", moves=" << sol.moves.size() << "[";
 		for (auto m : sol.moves) {
-			os << +m.col << ':' << m.c << ", ";
+			os << +m.col + 1 << ':' << m.c << ", ";
 		}
 		return os << "]}";
 	}
@@ -362,16 +365,17 @@ struct solution
 	auto s() & -> cached_solve& { return *this; }
 	auto s() const& -> const cached_solve& { return *this; }
 	auto s() && -> cached_solve&& { return std::move(*this); }
-	[[nodiscard]] auto play(this auto self, size_t i) -> solution {
+	[[nodiscard]] auto play(this solution self, size_t i) -> solution {
 		self.do_play(i);
 		return self;
 	}
-	[[nodiscard]] auto play(this auto self, move m) -> solution {
+	[[nodiscard]] auto play(this solution self, move m) -> solution {
 		assert(self.top(m.col) == m.c);
 		self.do_play(m.col);
 		return self;
 	}
-	[[nodiscard]] auto play(this auto self, span<const move> ms) -> solution {
+	[[nodiscard]] auto play(this solution self, span<const move> ms)
+	    -> solution {
 		for (auto m : ms) {
 			assert(self.top(m.col) == m.c);
 			self.do_play(m.col);
@@ -387,9 +391,13 @@ struct solution
 		score = game::score();
 	}
 };
-constexpr auto print_freq = 1'000'000;
+constexpr auto print_freq = 100'000;
+constexpr auto print_scale = 1'000;
+constexpr auto print_suff = 'k';
 
-using cache = map<game::tableau_type, cached_solve>;
+// using cache = map<game::tableau_type, cached_solve>;
+using cache = unordered_map<game::tableau_type, cached_solve,
+                            kblib::FNV_hash<game::tableau_type>>;
 struct solve_context {
 	cache mem;
 	solution best_solve{};
@@ -429,8 +437,8 @@ auto assert_cache_valid(const cache& mem) {
 	}
 }
 
-auto solve(solve_context& ctx, solution s_current, bool force = false)
-    -> solution {
+auto solve(solve_context& ctx, solution s_current, int score_prefix,
+           bool force = false) -> solution {
 	vector<solution> options;
 	auto s_best = s_current;
 	bool is_leaf = true;
@@ -446,32 +454,33 @@ auto solve(solve_context& ctx, solution s_current, bool force = false)
 			//	auto& sol = it->second;
 			//	DEBUG_CACHE_ENTRY(s_current.g(), sol);
 			s_best = s_current.play(it->second.moves);
-			// options is not used so this counts for one leaf
+			// this counts for one leaf
 			//	DEBUG_EMPTY_TAB(s_best);
 		} else {
 			// clear the current moves for the cache
 			auto g1 = game{s_current.tableau_};
-			auto sol = solve(ctx, {g1}, true);
+			auto sol = solve(ctx, {g1}, score_prefix + s_current.score_, true);
+			is_leaf = false;
 			// DEBUG_CACHE_ENTRY(g1, sol);
 			ctx.mem.try_emplace(s_current.tableau_,
 			                    cached_solve{sol.moves, sol.score});
-			assert_cache_valid(ctx.mem);
+			// assert_cache_valid(ctx.mem);
 			// combine the move lists, skip the leaf increment because this is
 			// pseudo-tail recursion
 			s_best = s_current.play(sol.moves);
-			is_leaf = false;
 			// DEBUG_EMPTY_TAB(s_best);
 		}
 	} else {
 		for (auto i : range(uint8_t{game::tableau_width})) {
 			if (s_current.can_play(i)) {
 				options.push_back(s_current.play(i));
-				is_leaf = false;
 			}
 		}
 		stdr::sort(options, std::greater<>{}, &solution::score);
 		for (auto s_next : options) {
-			if (auto s_tmp = solve(ctx, s_next); s_tmp.score >= s_best.score) {
+			if (auto s_tmp = solve(ctx, s_next, score_prefix);
+			    s_tmp.score >= s_best.score) {
+				is_leaf = false;
 				s_best = std::move(s_tmp);
 			}
 		}
@@ -480,20 +489,24 @@ auto solve(solve_context& ctx, solution s_current, bool force = false)
 
 	if (is_leaf) {
 		++ctx.total_leaves;
-		if (s_best.score > ctx.best_solve.score) {
+		if (s_best.score + score_prefix > ctx.best_solve.score
+		    and s_best.moves.size() == 52) {
 			ctx.best_solve = s_best;
 			cout << "leaf[" << ctx.total_leaves
-			     << "] new best solve: " << s_best.s() << '\n';
+			     << "] new best solve: " << ctx.best_solve.s() << '\n';
 		}
 		if (ctx.total_leaves - ctx.last_printed > print_freq) {
-			cout << "leaves: " << ctx.total_leaves / print_freq
-			     << "M; top score: " << ctx.best_solve.score << '\n';
+			cout << "leaves: " << ctx.total_leaves / print_scale << print_suff
+			     << "; top score: " << ctx.best_solve.score
+			     << " (calc: " << score_prefix + s_best.score_
+			     << "); suffix length: " << s_current.card_count() << "; subscore "
+			     << s_best.g().score() << '\n';
 			ctx.last_printed = (ctx.total_leaves / print_freq) * print_freq;
 		}
 	}
 	if (info_requested.exchange(0)) {
-		cout << "leaves: " << ctx.total_leaves
-		     << "M; best: " << ctx.best_solve.s() << '\n';
+		cout << "leaves: " << ctx.total_leaves / print_scale << print_suff
+		     << "; best: " << ctx.best_solve.s() << '\n';
 	}
 	return s_best;
 }
@@ -529,7 +542,7 @@ auto preprocess_scores(solve_context& ctx, const game& g) -> void {
 			break;
 		}
 		auto g1 = game(g.tableau_, p);
-		auto sol = solve(ctx, {g1});
+		auto sol = solve(ctx, {g1}, 0);
 		DEBUG_CACHE_ENTRY(g1, sol);
 		ctx.mem.try_emplace(g1.tableau_, cached_solve{sol.moves, sol.score});
 		assert_cache_valid(ctx.mem);
@@ -544,14 +557,15 @@ void process_deal(game g) {
 	solve_context ctx;
 	// preprocess_scores(ctx, g);
 	// cout << "preprocessed smallest " << c.size() << " board states\n";
-	auto s = solve(ctx, {g});
+	auto s = solve(ctx, {g}, 0);
 	cout << "best solution found " << s.s() << '\n';
 	cout << "searched " << ctx.total_leaves << " solutions\n";
 	cout << "walkthrough:\n";
 	auto g1 = g;
+	cout << "init: " << g1 << '\n';
 	for (auto m : s.moves) {
-		cout << +m.col << '(' << m.c << "): " << g1 << '\n';
 		g1.play(m.col);
+		cout << +m.col + 1 << '(' << m.c << "): " << g1 << '\n';
 	}
 	return;
 }
