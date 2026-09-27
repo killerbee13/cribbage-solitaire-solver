@@ -190,15 +190,66 @@ struct game {
 
 		stack_.push_back(c);
 		if (stack_.size() >= 3) {
-			// run of 3 to 7 cards, in any order = +3 to +7 pts
-			for (auto size : range(min(7uz, stack_.size()), 2uz, -1uz)) {
-				vector<card> last(end(stack_) - size, end(stack_));
-				stdr::sort(last);
-				if (is_consecutive(last)) {
-					score_ += size;
+			// std::cout << *this << '\n';
+			int count{};
+			//			int countf{};
+			//			float sum{};
+			std::uint16_t bitset{};
+			for (auto n : range(min(kblib::to_signed(stack_.size()), 7z))) {
+				std::int32_t c1 = kblib::etoi(stack_.at(stack_.size() - n - 1));
+				//				cout << label_for_card(card(c1));
+				if (bitset & 1 << c1) {
 					break;
 				}
+				bitset |= 1 << c1;
+				auto a = bitset >> std::countr_zero(bitset);
+				auto b = (1 << (n + 1)) - 1;
+				if (a == b) {
+					count = n + 1;
+				}
+				//				cout << ((a == b) ? '+' : '-');
+				//				sum += std::bit_cast<float>(c1 << 23);
+				//				auto af = std::bit_cast<std::int32_t>(sum) << 9;
+				//				auto bf = ~0 << (32 - (n + 1)) << 1;
+				//				if (af == bf) {
+				//					countf = n + 1;
+				//				}
+				//				cout << ((af == bf) ? '+' : '-');
 			}
+
+			//			for (auto c : stack_) {
+			//				cout << label_for_card(c);
+			//			}
+			//			cout << ' ';
+			//			cout << count << " == " << countf << '\n';
+			//			assert(count == countf);
+			if (count >= 3) {
+				score_ += count;
+			}
+			//			cout << ' ';
+			//			int run_len{};
+			// run of 3 to 7 cards, in any order = +3 to +7 pts
+			//			for (auto size : range(min(7z,
+			// kblib::to_signed(stack_.size())), 2z, kblib::decrementer{})) {
+			//				vector<card> last(end(stack_) - size, end(stack_));
+			//				stdr::sort(last);
+			//				//				for (auto c : last) {
+			//				//					cout << label_for_card(c);
+			//				//				}
+			//				//				cout << ' ';
+			//				if (is_consecutive(last)) {
+			// score_ += size;
+			//					//					run_len = size;
+			//					break;
+			//				}
+			//			}
+			//			cout << std::endl;
+			//			if (not (count < 3 or run_len == count)) {
+			//				cout << *this << '\n';
+			//				cout << run_len << " == " << count << '\n';
+			//			}
+			//			assert(count < 3 or run_len == count);
+			//			score_ += run_len;
 		}
 	}
 
@@ -391,7 +442,7 @@ struct solution
 		score = game::score();
 	}
 };
-constexpr auto print_freq = 100'000;
+constexpr auto print_freq = 500'000;
 constexpr auto print_scale = 1'000;
 constexpr auto print_suff = 'k';
 
@@ -535,17 +586,17 @@ auto preprocess_scores(solve_context& ctx, const game& g) -> void {
 		return pair(accumulate(begin(p), end(p), 0u), p);
 	});
 	for (auto p : positions) {
-		if (accumulate(begin(p), end(p), 0u) < 6) {
-			// continue;
-		}
-		if (accumulate(begin(p), end(p), 0u) > 26) {
+		// if (accumulate(begin(p), end(p), 0u) < 6) {
+		//		continue;
+		// }
+		if (accumulate(begin(p), end(p), 0u) > 16) {
 			break;
 		}
 		auto g1 = game(g.tableau_, p);
 		auto sol = solve(ctx, {g1}, 0);
-		DEBUG_CACHE_ENTRY(g1, sol);
+		// DEBUG_CACHE_ENTRY(g1, sol);
 		ctx.mem.try_emplace(g1.tableau_, cached_solve{sol.moves, sol.score});
-		assert_cache_valid(ctx.mem);
+		// assert_cache_valid(ctx.mem);
 		//	cout << "pos: (" << p[0] << ',' << p[1] << ',' << p[2] << ',' << p[3]
 		//	     << "), score: " << score << '\n';
 	}
@@ -556,7 +607,7 @@ void process_deal(game g) {
 	cout << g << '\n' << g.score() << '\n';
 	solve_context ctx;
 	// preprocess_scores(ctx, g);
-	// cout << "preprocessed smallest " << c.size() << " board states\n";
+	// cout << "preprocessed smallest " << ctx.mem.size() << " board states\n";
 	auto s = solve(ctx, {g}, 0);
 	cout << "best solution found " << s.s() << '\n';
 	cout << "searched " << ctx.total_leaves << " solutions\n";
@@ -576,6 +627,7 @@ auto main(int argc, char** argv) -> int {
 	signal(SIGUSR1, siginfo_handler);
 	signal(SIGUSR2, siginfo_handler);
 	signal(SIGTSTP, siginfo_handler);
+
 	if (argc > 1) {
 		for (string_view sv : kblib::indirect(&argv[1], &argv[argc])) {
 			if (sv == "-") {
