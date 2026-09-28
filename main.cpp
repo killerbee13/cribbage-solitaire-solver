@@ -20,6 +20,7 @@
 #endif
 
 #include "kblib/containers.h"
+#include "kblib/direct_map.h"
 #include "kblib/hash.h"
 #include "kblib/iterators.h"
 #include "kblib/random.h"
@@ -36,6 +37,8 @@
 #include <ranges>
 #include <vector>
 
+using std::begin, std::cbegin, std::rbegin, std::crbegin, std::end, std::cend,
+    std::rend, std::crend;
 using std::exchange, std::all_of, std::accumulate, kblib::min, kblib::max,
     kblib::range, kblib::etoi;
 using std::istream, std::ostream, std::cin, std::cout, std::cerr,
@@ -94,25 +97,17 @@ auto label_for_card(card c) -> char {
 }
 ostream& operator<<(ostream& os, card c) { return os << label_for_card(c); }
 
-auto is_consecutive(stdr::forward_range auto&& r) -> bool {
-	if (empty(r)) {
-		return true;
-	} else {
-		return stdr::equal(
-		    r, range(*begin(r), static_cast<std::decay_t<decltype(*begin(r))>>(
-		                            *(end(r) - 1) + 1)));
-	}
-}
+using card_stack = std::basic_string<card>;
 
 struct game {
 	static constexpr auto tableau_width = 4u;
 	static constexpr auto tableau_depth = 13u;
 	static constexpr auto total_limit = 31;
 	static constexpr auto score_target = 61;
-	using tableau_type = array<vector<card>, tableau_width>;
+	using tableau_type = array<card_stack, tableau_width>;
 
 	tableau_type tableau_{};
-	vector<card> stack_{};
+	card_stack stack_{};
 	int score_{};
 
 	auto pop(size_t i) -> card {
@@ -185,7 +180,7 @@ struct game {
 		auto same_count = std::find_if(rbegin(stack_), rend(stack_),
 		                               [c](card x) { return x != c; })
 		                  - rbegin(stack_);
-		const array same_scores{0, 2, 6, 12};
+		constexpr static array same_scores{0, 2, 6, 12};
 		score_ += same_scores[same_count];
 
 		stack_.push_back(c);
@@ -405,9 +400,34 @@ constexpr auto print_freq = 500'000;
 constexpr auto print_scale = 1'000;
 constexpr auto print_suff = 'k';
 
-// using cache = map<game::tableau_type, cached_solve>;
-using cache = unordered_map<game::tableau_type, cached_solve,
-                            kblib::FNV_hash<game::tableau_type>>;
+constexpr bool use_direct_map = false;
+
+using key = std::uint16_t;
+constexpr auto key_base = 16;
+constexpr auto key_max = key_base * key_base * key_base * key_base - 1;
+auto key_from_game(const game& g) -> key {
+	assert(g.stack_.empty());
+	key ret{};
+	for (auto col : g.tableau_) {
+		ret = ret * key_base + col.size();
+	}
+	return ret;
+}
+auto count_from_key(key k) -> size_t {
+	size_t ret{};
+	for (auto _ : range(game::tableau_width)) {
+		ret += k % key_base;
+		k /= key_base;
+	}
+	return ret;
+}
+auto count_from_key(const game::tableau_type& tab) {
+	return tab[0].size() + tab[1].size() + tab[2].size() + tab[3].size();
+}
+
+using cache
+    = std::conditional_t<use_direct_map, kblib::direct_map<key, cached_solve>,
+                         unordered_map<key, cached_solve>>;
 struct solve_context {
 	cache mem;
 	solution best_solve{};
@@ -439,8 +459,7 @@ struct solve_context {
 
 auto assert_cache_valid(const cache& mem) {
 	for (auto [tab, solve] : mem) {
-		auto g = game(tab);
-		auto count = g.card_count();
+		auto count = count_from_key(tab);
 		auto size = solve.moves.size();
 		assert(count == size);
 		// DEBUG_CACHE_ENTRY(g, solve);
@@ -455,7 +474,8 @@ auto solve(solve_context& ctx, solution s_current, int score_prefix,
 	if (s_current.card_count() == 0 or stop_requested) {
 		// do nothing
 	} else if (s_current.stack_.empty() and not force) {
-		if (auto it = ctx.mem.find(s_current.tableau_); it != end(ctx.mem)) {
+		if (auto it = ctx.mem.find(key_from_game(s_current));
+		    it != end(ctx.mem)) {
 			auto& sol = it->second;
 			// DEBUG_CACHE_ENTRY(s_current.g(), sol);
 			s_best = s_current.play(sol.moves);
@@ -467,7 +487,7 @@ auto solve(solve_context& ctx, solution s_current, int score_prefix,
 			auto sol = solve(ctx, {g1}, score_prefix + s_current.score_, true);
 			is_leaf = false;
 			// DEBUG_CACHE_ENTRY(g1, sol);
-			ctx.mem.try_emplace(s_current.tableau_,
+			ctx.mem.try_emplace(key_from_game(s_current),
 			                    cached_solve{sol.moves, sol.score});
 			// assert_cache_valid(ctx.mem);
 
@@ -517,6 +537,7 @@ auto solve(solve_context& ctx, solution s_current, int score_prefix,
 	return s_best;
 }
 
+// this whole thing could use `key`s instead
 auto preprocess_scores(solve_context& ctx, const game& g) -> void {
 	using position = array<unsigned, game::tableau_width>;
 	vector<position> positions;
@@ -550,7 +571,8 @@ auto preprocess_scores(solve_context& ctx, const game& g) -> void {
 		auto g1 = game(g.tableau_, p);
 		auto sol = solve(ctx, {g1}, 0);
 		// DEBUG_CACHE_ENTRY(g1, sol);
-		ctx.mem.try_emplace(g1.tableau_, cached_solve{sol.moves, sol.score});
+		ctx.mem.try_emplace(key_from_game(g1),
+		                    cached_solve{sol.moves, sol.score});
 		// assert_cache_valid(ctx.mem);
 		// cout << "pos: (" << p[0] << ',' << p[1] << ',' << p[2] << ',' << p[3]
 		//     << "), score: " << score << '\n';
@@ -560,12 +582,12 @@ auto preprocess_scores(solve_context& ctx, const game& g) -> void {
 
 void process_deal(game g) {
 	cout << g << '\n' << g.score() << '\n';
-	solve_context ctx;
+	auto ctx = std::make_unique<solve_context>();
 	// preprocess_scores(ctx, g);
 	// cout << "preprocessed smallest " << ctx.mem.size() << " board states\n";
-	auto s = solve(ctx, {g}, 0);
+	auto s = solve(*ctx, {g}, 0);
 	cout << "best solution found " << s.s() << '\n';
-	cout << "searched " << ctx.total_leaves << " solutions\n";
+	cout << "searched " << ctx->total_leaves << " solutions\n";
 	cout << "walkthrough:\n";
 	auto g1 = g;
 	cout << "init: " << g1 << '\n';
