@@ -49,7 +49,9 @@ endif()
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO ON)
 
-add_executable(cribbage-solitaire-solver main.cpp LICENSE)
+add_executable(cribbage-solitaire-solver
+	main.cpp common.hpp dfs.hpp dfs.cpp bfs.hpp bfs.cpp
+	LICENSE)
 
 # used to add non-installed libraries
 include_directories(SYSTEM PRIVATE
