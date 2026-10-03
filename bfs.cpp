@@ -16,3 +16,12 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  * ****************************************************************************/
 #include "bfs.hpp"
+
+namespace bfs {
+
+auto solve(solve_context& ctx, solution s_current) -> solution {
+
+	return s_current;
+}
+
+} // namespace bfs

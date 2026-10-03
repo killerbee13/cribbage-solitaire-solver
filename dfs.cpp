@@ -18,6 +18,8 @@
 #include "dfs.hpp"
 #include "common.hpp"
 
+// #include "kblib/sort.h"
+
 #define DEBUG_CACHE_ENTRY(g, s)                                             \
 	do {                                                                     \
 		auto count = g.card_count();                                          \
@@ -43,26 +45,26 @@
 
 namespace dfs {
 
-auto assert_cache_valid(const cache& mem) {
-	for (auto [tab, solve] : mem) {
+auto assert_cache_valid([[maybe_unused]] const cache& mem) {
+#ifndef NDEBUG
+	for (auto [tab, sol] : mem) {
 		auto count = count_from_key(tab);
-		auto size = solve.moves.size();
+		auto size = sol.moves.size();
 		assert(count == size);
 		// DEBUG_CACHE_ENTRY(g, solve);
 	}
+#endif
 }
 
-auto solve(solve_context& ctx, solution s_current, int score_prefix, bool force)
-    -> solution {
+auto solve_t::operator()(solve_context& ctx, solution s_current,
+                         int score_prefix, bool force) -> solution {
 	vector<solution> options;
 	auto s_best = s_current;
 	bool is_leaf = true;
 	if (s_current.card_count() == 0 or stop_requested) {
 		// do nothing
 	} else if (s_current.stack_.empty() and not force) {
-
-		if (auto it = ctx.mem.find(key_from_game(s_current));
-		    it != end(ctx.mem)) {
+		if (auto it = ctx.mem.find(s_current.key()); it != end(ctx.mem)) {
 			auto& sol = it->second;
 			// DEBUG_CACHE_ENTRY(s_current.g(), sol);
 			s_best = s_current.play(sol.moves);
@@ -74,7 +76,7 @@ auto solve(solve_context& ctx, solution s_current, int score_prefix, bool force)
 			auto sol = solve(ctx, {g1}, score_prefix + s_current.score_, true);
 			is_leaf = false;
 			// DEBUG_CACHE_ENTRY(g1, sol);
-			ctx.mem.try_emplace(key_from_game(s_current),
+			ctx.mem.try_emplace(s_current.key(),
 			                    cached_solve{sol.moves, sol.score});
 			// assert_cache_valid(ctx.mem);
 
@@ -84,11 +86,15 @@ auto solve(solve_context& ctx, solution s_current, int score_prefix, bool force)
 			// DEBUG_EMPTY_TAB(s_best);
 		}
 	} else {
-		for (auto i : range(uint8_t{game::tableau_width})) {
+		for (auto i : range(uint8_t{tableau_width})) {
 			if (s_current.can_play(i)) {
 				options.push_back(s_current.play(i));
 			}
 		}
+		//		kblib::insertion_sort(begin(options), end(options),
+		//		                      [](const auto& lhs, const auto& rhs) {
+		//			                      return lhs.score > rhs.score;
+		//		                      });
 		stdr::sort(options, std::greater<>{}, &solution::score);
 		for (auto s_next : options) {
 			if (auto s_tmp = solve(ctx, s_next, score_prefix);
@@ -126,13 +132,13 @@ auto solve(solve_context& ctx, solution s_current, int score_prefix, bool force)
 
 // this whole thing could use `key`s instead
 auto preprocess_scores(solve_context& ctx, const game& g) -> void {
-	using position = array<unsigned, game::tableau_width>;
+	using position = array<unsigned, tableau_width>;
 	vector<position> positions;
 	auto inc = [](position& x) {
 		bool carry = true;
 		for (auto& p : x) {
 			// note that this does allow values of 0 to tableau_depth in each digit
-			if ((p += exchange(carry, false)) > game::tableau_depth) {
+			if ((p += exchange(carry, false)) > tableau_depth) {
 				p = 0;
 				carry = true;
 			} else {
@@ -158,32 +164,12 @@ auto preprocess_scores(solve_context& ctx, const game& g) -> void {
 		auto g1 = game(g.tableau_, p);
 		auto sol = solve(ctx, {g1}, 0);
 		// DEBUG_CACHE_ENTRY(g1, sol);
-		ctx.mem.try_emplace(key_from_game(g1),
-		                    cached_solve{sol.moves, sol.score});
+		ctx.mem.try_emplace(g1.key(), cached_solve{sol.moves, sol.score});
 		// assert_cache_valid(ctx.mem);
 		// cout << "pos: (" << p[0] << ',' << p[1] << ',' << p[2] << ',' << p[3]
 		//     << "), score: " << score << '\n';
 	}
 	return;
-}
-
-auto process_deal(game g) -> int {
-	cout << g << '\n' << g.score() << '\n';
-	auto ctx = std::make_unique<solve_context>();
-	// preprocess_scores(ctx, g);
-	// cout << "preprocessed smallest " << ctx.mem.size() << " board
-	// states\n";
-	auto s = solve(*ctx, {g}, 0);
-	cout << "best solution found " << s.s() << '\n';
-	cout << "searched " << ctx->total_leaves << " solutions\n";
-	cout << "walkthrough:\n";
-	auto g1 = g;
-	cout << "init: " << g1 << '\n';
-	for (auto m : s.moves) {
-		g1.play(m.col);
-		cout << +m.col + 1 << '(' << m.c << "): " << g1 << '\n';
-	}
-	return s.score_;
 }
 
 } // namespace dfs

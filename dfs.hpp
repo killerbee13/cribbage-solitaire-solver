@@ -18,14 +18,19 @@
 #ifndef DFS_HPP
 #define DFS_HPP
 
+#include "cache.hpp"
 #include "common.hpp"
 
 namespace dfs {
 
-auto solve(solve_context& ctx, solution s_current, int score_prefix,
-           bool force = false) -> solution;
+// this is ugly but it allows using default arguments with the template
+struct solve_t {
+	static auto operator()(solve_context& ctx, solution s_current,
+	                       int score_prefix = 0, bool force = false) -> solution;
+} inline solve;
+inline auto process_deal = ::process_deal<solve>;
+
 auto preprocess_scores(solve_context& ctx, const game& g) -> void;
-auto process_deal(game g) -> int;
 
 } // namespace dfs
 

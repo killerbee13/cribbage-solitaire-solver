@@ -45,8 +45,8 @@ elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
 endif()
 
 if(CMAKE_BUILD_TYPE MATCHES "Debug")
-#	add_compile_options(-fsanitize=undefined,address)
-#	add_link_options(-fsanitize=undefined,address)
+	add_compile_options(-fsanitize=undefined,address)
+	add_link_options(-fsanitize=undefined,address)
 endif()
 
 if(CMAKE_BUILD_TYPE MATCHES "Release")
@@ -61,7 +61,8 @@ set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO ON)
 add_executable(cribbage-solitaire-solver)
 target_sources(cribbage-solitaire-solver
 	PRIVATE
-		main.cpp common.hpp dfs.hpp dfs.cpp bfs.hpp bfs.cpp
+		main.cpp common.hpp card.hpp cache.hpp inplace_vector.hpp utils.hpp
+		dfs.hpp dfs.cpp bfs.hpp bfs.cpp
 	LICENSE)
 
 # used to add non-installed libraries

@@ -18,8 +18,14 @@
 #ifndef BFS_HPP
 #define BFS_HPP
 
+#include "cache.hpp"
 #include "common.hpp"
 
-namespace bfs {}
+namespace bfs {
+
+auto solve(solve_context& ctx, solution s_current) -> solution;
+inline auto process_deal = ::process_deal<solve>;
+
+} // namespace bfs
 
 #endif // BFS_HPP
