@@ -1,4 +1,13 @@
-cmake_minimum_required(VERSION 3.11)
+cmake_minimum_required(VERSION 3.18)
+
+if (CMAKE_GENERATOR MATCHES "Ninja")
+file(
+    WRITE "${CMAKE_BINARY_DIR}/GNUMakeRulesOverwrite.cmake"
+        "STRING(REPLACE \"-MD\" \"-MMD\" CMAKE_DEPFILE_FLAGS_C \"\${CMAKE_DEPFILE_FLAGS_C}\")\n"
+        "STRING(REPLACE \"-MD\" \"-MMD\" CMAKE_DEPFILE_FLAGS_CXX \"\${CMAKE_DEPFILE_FLAGS_CXX}\")\n"
+)
+set(CMAKE_USER_MAKE_RULES_OVERRIDE "${CMAKE_BINARY_DIR}/GNUMakeRulesOverwrite.cmake" CACHE INTERNAL "")
+endif()
 
 project(cribbage-solitaire-solver LANGUAGES CXX)
 
@@ -49,8 +58,10 @@ endif()
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO ON)
 
-add_executable(cribbage-solitaire-solver
-	main.cpp common.hpp dfs.hpp dfs.cpp bfs.hpp bfs.cpp
+add_executable(cribbage-solitaire-solver)
+target_sources(cribbage-solitaire-solver
+	PRIVATE
+		main.cpp common.hpp dfs.hpp dfs.cpp bfs.hpp bfs.cpp
 	LICENSE)
 
 # used to add non-installed libraries
