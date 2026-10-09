@@ -76,7 +76,7 @@ auto main(int argc, char** argv) -> int {
 				dfs::process_deal(std::move(g));
 			}
 			auto last_end = steady_clock::now();
-			print_time_delta(last_start, last_end);
+			// print_time_delta(last_start, last_end);
 			last_start = last_end;
 			++deals_looped;
 		}

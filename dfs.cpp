@@ -43,6 +43,11 @@
 	} while (false)                                                  \
 	}
 
+auto enumerate_stacks(solve_context& ctx, solution s_current)
+    -> vector<inplace_vector<move, 13>> {
+	vector<inplace_vector<move, 13>> ret;
+}
+
 namespace dfs {
 
 auto assert_cache_valid([[maybe_unused]] const cache& mem) {
@@ -55,8 +60,6 @@ auto assert_cache_valid([[maybe_unused]] const cache& mem) {
 	}
 #endif
 }
-
-auto enumerate_stacks(solve_context& ctx, solution s_current) -> void {}
 
 auto solve_t::operator()(solve_context& ctx, solution s_current,
                          int score_prefix, bool force) -> solution {

@@ -22,6 +22,7 @@
 #include "utils.hpp"
 
 #include "kblib/fakestd.h"
+#include <sstream>
 
 struct cached_solve {
 	inplace_vector<move, 52> moves;
@@ -49,6 +50,21 @@ struct solution
 	auto s() & -> cached_solve& { return *this; }
 	auto s() const& -> const cached_solve& { return *this; }
 	auto s() && -> cached_solve&& { return std::move(*this); }
+
+	auto rep() const -> std::string {
+		std::ostringstream ret;
+		ret << "Score: " << score << " Solution: ";
+		for (auto m : moves) {
+			ret << +m.col + 1;
+			if (m.is_submit) {
+				ret << '_';
+			}
+		}
+		auto str = std::move(ret).str();
+		str.pop_back();
+		return str;
+	}
+
 	[[nodiscard]] auto play(this solution self, size_t i) -> solution {
 		self.do_play(i);
 		return self;

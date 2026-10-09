@@ -63,7 +63,7 @@ target_sources(cribbage-solitaire-solver
 	PRIVATE
 		main.cpp common.hpp game.hpp card.hpp cache.hpp inplace_vector.hpp utils.hpp
 		dfs.hpp dfs.cpp bfs.hpp bfs.cpp
-	LICENSE)
+	LICENSE run_each.sh)
 
 # used to add non-installed libraries
 include_directories(SYSTEM PRIVATE

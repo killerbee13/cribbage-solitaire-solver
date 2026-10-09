@@ -260,6 +260,19 @@ struct game {
 		os << ':' << g.score();
 		return os;
 	}
+	auto deal() const -> std::string {
+		decltype(auto) labels = "-A23456789TJQK";
+		auto ret = std::string{};
+		for (auto col : tableau_) {
+			for (auto c : col) {
+				ret.push_back(labels[etoi(c)]);
+			}
+			ret.push_back('_');
+		}
+		ret.pop_back();
+		return ret;
+	}
+
 	game() = default;
 	game(const game&) = default;
 	game(game&&) = default;
