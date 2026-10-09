@@ -19,23 +19,42 @@
 #	undef NDEBUG
 #endif
 
-#include "bfs.hpp"
 #include "common.hpp"
 #include "dfs.hpp"
 
-#include "kblib/direct_map.h"
 #include "kblib/iterators.h"
 #include "kblib/random.h"
 
-#include <algorithm>
-#include <array>
 #include <cassert>
+#include <chrono>
 #include <csignal>
+#include <format>
 #include <iostream>
-#include <ranges>
 
 extern "C" void sigterm_handler(int signal) { stop_requested = signal; }
 extern "C" void siginfo_handler(int signal) { info_requested = signal; }
+
+namespace ch = std::chrono;
+using ch::steady_clock;
+
+auto print_time_msg() -> std::ostream& {
+	auto now_seconds = ch::time_point_cast<ch::seconds>(ch::system_clock::now());
+	std::println("{:%T}: ", now_seconds);
+	return std::cout;
+}
+
+auto print_time_delta(steady_clock::time_point begin,
+                      steady_clock::time_point end) -> void {
+	auto diff = ch::duration_cast<ch::duration<float>>(
+	    ch::duration_cast<ch::milliseconds>(end - begin));
+	auto now_seconds = ch::time_point_cast<ch::seconds>(ch::system_clock::now());
+	if (diff > ch::minutes{1}) {
+		std::println("{0:%T}: {1} ({1:%T}) elapsed", now_seconds, diff);
+	} else {
+		std::println("{0:%T}: {1} elapsed", now_seconds, diff);
+	}
+	return;
+}
 
 auto main(int argc, char** argv) -> int {
 	signal(SIGTERM, sigterm_handler);
@@ -44,7 +63,10 @@ auto main(int argc, char** argv) -> int {
 	signal(SIGUSR2, siginfo_handler);
 	signal(SIGTSTP, siginfo_handler);
 
+	auto start = steady_clock::now();
+	int deals_looped{};
 	if (argc > 1) {
+		auto last_start = start;
 		for (string_view sv : kblib::indirect(&argv[1], &argv[argc])) {
 			if (sv == "-") {
 				auto g = read_deal(cin);
@@ -53,11 +75,19 @@ auto main(int argc, char** argv) -> int {
 				auto g = game(sv);
 				dfs::process_deal(std::move(g));
 			}
+			auto last_end = steady_clock::now();
+			print_time_delta(last_start, last_end);
+			last_start = last_end;
+			++deals_looped;
 		}
 	} else {
 		auto seed = std::random_device{}();
 		cout << "seed: " << seed << '\n';
 		auto g = game(kblib::best_lcgs::lcg32(seed));
 		dfs::process_deal(std::move(g));
+	}
+	if (deals_looped != 1) {
+		auto end = steady_clock::now();
+		print_time_delta(start, end);
 	}
 }

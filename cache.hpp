@@ -18,13 +18,10 @@
 #ifndef CACHE_HPP
 #define CACHE_HPP
 
-#include "common.hpp"
-
+#include "game.hpp"
 #include "utils.hpp"
 
 #include "kblib/fakestd.h"
-#include <bitset>
-#include <ranges>
 
 struct cached_solve {
 	inplace_vector<move, 52> moves;
@@ -73,22 +70,68 @@ struct solution
  private:
 	auto do_play(size_t i) -> void {
 		assert(can_play(i));
-		moves.push_back({static_cast<uint8_t>(i), top(i)});
-		game::play(i);
-		score = game::score();
+		moves.push_back({static_cast<uint8_t>(i), top(i), game::play(i)});
+		cached_solve::score = game::score();
 	}
 };
 
 class cache_map {
  private:
 	struct storage_type {
-		std::bitset<key_max + 1> slots{};
+		using int_type = unsigned long long;
+		static constexpr std::size_t slot_count = key_max + 1;
+		static constexpr std::size_t bits_per_word = sizeof(int_type) * CHAR_BIT;
+
+		std::array<int_type, (slot_count - 1) / bits_per_word + 1> slotmap;
 		std::array<cached_solve, key_max + 1> map{};
-		constexpr auto first() const noexcept -> size_t {
-			return slots._Find_first();
+
+		constexpr static auto index_and_bit(int k) noexcept
+		    -> std::pair<unsigned, int_type> {
+			auto i = kblib::div(k, bits_per_word);
+			return {i.quot, int_type{1} << i.rem};
 		}
-		constexpr auto next(key_type k) const noexcept -> size_t {
-			return slots._Find_next(k);
+		auto test(key_type k) const noexcept -> bool {
+			assert(k >= 0 and std::cmp_less(k, slot_count));
+			// can't use structured binding because std::div_t has unspecified
+			// member order
+			auto [i, b] = index_and_bit(k);
+			return slotmap[i] & b;
+		}
+		auto set(key_type k) noexcept -> void {
+			assert(k >= 0 and std::cmp_less(k, slot_count));
+			auto [i, b] = index_and_bit(k);
+			slotmap[i] |= b;
+			return;
+		}
+
+		constexpr auto first() const noexcept -> key_type {
+			auto it = std::find_if(slotmap.begin(), slotmap.end(),
+			                       [](int_type i) { return i != 0; });
+			if (it == slotmap.end()) {
+				return slot_count;
+			} else {
+				return (it - slotmap.begin()) * bits_per_word
+				       + std::countr_zero(*it);
+			}
+		}
+		constexpr auto next(key_type k) const noexcept -> key_type {
+			if (k == slot_count) {
+				return slot_count;
+			} else {
+				auto [i, b] = index_and_bit(k);
+				// start the search from the bit after k%bits_per_word
+				if (auto w = slotmap[i] & (b - 1)) {
+					return k + std::countr_zero(w);
+				}
+				auto it = std::find_if(slotmap.begin() + i, slotmap.end(),
+				                       [](int_type i) { return i != 0; });
+				if (it == slotmap.end()) {
+					return slot_count;
+				} else {
+					return (it - slotmap.begin()) * bits_per_word
+					       + std::countr_zero(*it);
+				}
+			}
 		}
 	};
 	kblib::heap_value<storage_type> data_{kblib::in_place_agg};
@@ -135,11 +178,11 @@ class cache_map {
 		}
 		auto operator++(int) -> const_iterator {
 			const_iterator copy(*this);
-			key_ = data_->slots._Find_next(key_);
+			key_ = data_->next(key_);
 			return copy;
 		}
 		auto operator++() -> const_iterator& {
-			key_ = data_->slots._Find_next(key_);
+			key_ = data_->next(key_);
 			return *this;
 		}
 		auto operator==(const const_iterator& other) const -> bool = default;
@@ -169,11 +212,11 @@ class cache_map {
 		}
 		auto operator++(int) -> iterator {
 			iterator copy(*this);
-			key_ = data_->slots._Find_next(key_);
+			key_ = data_->next(key_);
 			return copy;
 		}
 		auto operator++() -> iterator& {
-			key_ = data_->slots._Find_next(key_);
+			key_ = data_->next(key_);
 			return *this;
 		}
 		auto operator==(const iterator& other) const -> bool = default;
@@ -212,14 +255,14 @@ class cache_map {
 	constexpr auto empty() const noexcept -> bool { return size_ == 0; }
 
 	constexpr auto find(key_type k) noexcept -> iterator {
-		if (data_->slots.test(k)) {
+		if (data_->test(k)) {
 			return iterator(*data_, k);
 		} else {
 			return end();
 		}
 	}
 	constexpr auto find(key_type k) const noexcept -> const_iterator {
-		if (data_->slots.test(k)) {
+		if (data_->test(k)) {
 			return const_iterator(*data_, k);
 		} else {
 			return end();
@@ -229,10 +272,11 @@ class cache_map {
 	template <typename... Args>
 	constexpr auto try_emplace(key_type k, Args&&... args)
 	    -> pair<iterator, bool> {
-		if (data_->slots.test(k)) {
+		if (data_->test(k)) {
 			return {iterator(*data_, k), false};
 		} else {
-			data_->slots.set(k);
+			data_->set(k);
+			assert(data_->test(k));
 			data_->map[k] = mapped_type(std::forward<Args>(args)...);
 			++size_;
 			return {iterator(*data_, k), true};
@@ -250,25 +294,9 @@ struct solve_context {
 	cache mem{};
 	size_t total_leaves{};
 	size_t last_printed{};
+	size_t multiplicity{};
 
 	auto game_from_key(key_type k) -> game { return game(original, k); }
 };
-
-template <auto solve>
-auto process_deal(game g) -> int {
-	cout << g << '\n' << g.score() << '\n';
-	auto ctx = std::make_unique<solve_context>(g);
-	auto s = solve(*ctx, {g});
-	cout << "best solution found " << s.s() << '\n';
-	cout << "searched " << ctx->total_leaves << " solutions\n";
-	cout << "walkthrough:\n";
-	auto g1 = g;
-	cout << "init: " << g1 << '\n';
-	for (auto m : s.moves) {
-		g1.play(m.col);
-		cout << +m.col + 1 << '(' << m.c << "): " << g1 << '\n';
-	}
-	return s.score_;
-}
 
 #endif // CACHE_HPP

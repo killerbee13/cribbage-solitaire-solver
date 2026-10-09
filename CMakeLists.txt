@@ -61,7 +61,7 @@ set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO ON)
 add_executable(cribbage-solitaire-solver)
 target_sources(cribbage-solitaire-solver
 	PRIVATE
-		main.cpp common.hpp card.hpp cache.hpp inplace_vector.hpp utils.hpp
+		main.cpp common.hpp game.hpp card.hpp cache.hpp inplace_vector.hpp utils.hpp
 		dfs.hpp dfs.cpp bfs.hpp bfs.cpp
 	LICENSE)
 

@@ -24,10 +24,7 @@
 #include "kblib/containers.h"
 #include "kblib/stringops.h"
 
-#include <algorithm>
-#include <array>
 #include <csignal>
-#include <iterator>
 #include <ostream>
 
 enum card : uint8_t {

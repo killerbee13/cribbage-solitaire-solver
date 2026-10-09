@@ -28,7 +28,7 @@ struct solve_t {
 	static auto operator()(solve_context& ctx, solution s_current,
 	                       int score_prefix = 0, bool force = false) -> solution;
 } inline solve;
-inline auto process_deal = ::process_deal<solve>;
+inline auto process_deal = process_deal_impl<solve>;
 
 auto preprocess_scores(solve_context& ctx, const game& g) -> void;
 

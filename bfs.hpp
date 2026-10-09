@@ -24,7 +24,7 @@
 namespace bfs {
 
 auto solve(solve_context& ctx, solution s_current) -> solution;
-inline auto process_deal = ::process_deal<solve>;
+inline auto process_deal = process_deal_impl<solve>;
 
 } // namespace bfs
 

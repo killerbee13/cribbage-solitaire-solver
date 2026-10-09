@@ -56,6 +56,8 @@ auto assert_cache_valid([[maybe_unused]] const cache& mem) {
 #endif
 }
 
+auto enumerate_stacks(solve_context& ctx, solution s_current) -> void {}
+
 auto solve_t::operator()(solve_context& ctx, solution s_current,
                          int score_prefix, bool force) -> solution {
 	vector<solution> options;
@@ -111,13 +113,17 @@ auto solve_t::operator()(solve_context& ctx, solution s_current,
 		if (s_best.score + score_prefix > ctx.best_solve.score
 		    and s_best.moves.size() == 52) {
 			ctx.best_solve = s_best;
+			ctx.multiplicity = 1;
 			cout << "leaf[" << ctx.total_leaves
 			     << "] new best solve: " << ctx.best_solve.s() << '\n';
+		} else if (s_best.score + score_prefix == ctx.best_solve.score
+		           and s_best.moves.size() == 52) {
+			++ctx.multiplicity;
 		}
 		if (ctx.total_leaves - ctx.last_printed > print_freq) {
 			cout << "leaves: " << ctx.total_leaves / print_scale << print_suff
-			     << "; top score: " << ctx.best_solve.score
-			     << " (calc: " << score_prefix + s_best.score_
+			     << "; top score: " << ctx.best_solve.score << "*"
+			     << ctx.multiplicity << " (calc: " << score_prefix + s_best.score_
 			     << "); suffix length: " << s_current.card_count() << "; subscore "
 			     << s_best.g().score() << '\n';
 			ctx.last_printed = (ctx.total_leaves / print_freq) * print_freq;
@@ -125,7 +131,8 @@ auto solve_t::operator()(solve_context& ctx, solution s_current,
 	}
 	if (info_requested.exchange(0)) {
 		cout << "leaves: " << ctx.total_leaves / print_scale << print_suff
-		     << "; best: " << ctx.best_solve.s() << '\n';
+		     << "; best: " << ctx.best_solve.s() << '*' << ctx.multiplicity
+		     << '\n';
 	}
 	return s_best;
 }
